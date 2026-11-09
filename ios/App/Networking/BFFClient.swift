@@ -232,7 +232,7 @@ final class BFFClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("ArkNet-iOS/1.0.1", forHTTPHeaderField: "User-Agent")
-        request.setValue(SessionStore.deviceID, forHTTPHeaderField: "device-id")
+        request.setValue(SharedStore.deviceID, forHTTPHeaderField: "device-id")
         request.setValue("ios", forHTTPHeaderField: "platform")
         request.setValue(Locale.current.identifier, forHTTPHeaderField: "locale")
         request.setValue(TimeZone.current.identifier, forHTTPHeaderField: "timezone")
@@ -303,7 +303,7 @@ final class BFFClient {
     /// Communication domains fetched during initialization are appended after
     /// the static zz1..zz3 list; hosts deduped, order preserved.
     static func raceCandidates(primaryFirst: Bool) -> [String] {
-        var all = SessionStore.bffEndpoints
+        var all = SharedStore.bffEndpoints
         if primaryFirst, let primary = all.first {
             all.removeFirst()
             all.insert(primary, at: 0)

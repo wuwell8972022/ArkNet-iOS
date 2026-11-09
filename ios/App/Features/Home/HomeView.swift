@@ -87,19 +87,21 @@ struct HomeView: View {
     }
 
     private func handleConnectTap() {
-        Task {
+        Task { @MainActor in
             if vpn.isSelected {
                 await vpn.disconnect()
-            } else {
-                // Auto-select: first recommended node (autoSelect flag), else first.
-                let nodes = (try? await APIService().getNodes())?.groups?.first?.nodes
-                    ?? (try? await APIService().getNodes())?.nodes ?? []
-                guard let target = nodes.first(where: { $0.autoSelect == true }) ?? nodes.first else {
-                    vpn.lastError = "暂无可用节点"
-                    return
-                }
-                await vpn.connect(to: target)
+                return
             }
+            // Auto-select: first recommended node (autoSelect flag), else first.
+            // NB: `??` takes a synchronous autoclosure, so `await` must be
+            // hoisted out of the expression.
+            let data = try? await APIService().getNodes()
+            let nodes = data?.groups?.first?.nodes ?? data?.nodes ?? []
+            guard let target = nodes.first(where: { $0.autoSelect == true }) ?? nodes.first else {
+                vpn.lastError = "暂无可用节点"
+                return
+            }
+            await vpn.connect(to: target)
         }
     }
 }
