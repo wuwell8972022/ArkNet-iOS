@@ -46,12 +46,14 @@ ArkNet-iOS/
 
 ```bash
 brew install go xcodegen
-go install github.com/sagernet/gomobile/cmd/gomobile@latest
-go install github.com/sagernet/gomobile/cmd/gobind@latest
+# 版本必须与 engine/go.mod require 的 sagernet/gomobile 一致
+go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
 gomobile init
 
 cd engine
-gomobile bind -target=ios -iosversion 15.0 \
+go mod download
+gomobile bind -target=ios -iosversion 16.0 \
   -bundleid com.at.arknetprod2.ios.framework \
   -o ../ios/Frameworks/ArkNet.xcframework ./bridge
 cd ..
@@ -60,16 +62,44 @@ xcodegen generate
 open ArkNet.xcodeproj    # 选 ArkNet scheme → Run
 ```
 
-## Codemagic 免费版打包
+> **gobind 版本坑**：`gobind` 在目标模块上下文中解析
+> `github.com/sagernet/gomobile/bind(/objc)`——若模块未显式 require gomobile，
+> 会报 `unable to import bind: no Go package`。本工程已在 engine/go.mod
+> 中 require `github.com/sagernet/gomobile v0.1.13`（与 CI 安装的二进制
+> 版本、Android 端 libarknet.so 构建版本三者一致）。
 
-1. 将本仓库推到 GitHub/GitLab/Bitbucket 并在 Codemagic 关联。
-2. 控制台创建环境变量组 **`arknet_signing`**（变量见 `codemagic.yaml` 头注释）。
-3. Apple 后台（需**付费**开发者账号——免费账号无法签发 packet-tunnel 权限）：
-   - 注册 App ID `com.at.arknetprod2.ios` 与 `com.at.arknetprod2.ios.tunnel`
-   - 两者都勾选 **Network Extension** 与 **App Groups**，并把 App Group
-     `group.com.at.arknetprod2.ios` 加入两个 App ID
-   - App Store Connect 创建 API Key，取 issuer/key id/p8
-4. push 到 `main` → 自动产出 IPA（`build/ios/ipa/*.ipa`）。
+## Codemagic 打包
+
+**当前 `codemagic.yaml` 为最简 Debug 工作流**：零凭据、零环境变量组，
+推到仓库后在 Codemagic 关联即可跑：
+
+> 工具链安装 → `ArkNet.xcframework`（sing-box 1.13.0 libbox）→
+> XcodeGen → `xcodebuild`（`CODE_SIGNING_ALLOWED=NO`）→ 未签名 debug IPA
+
+产物：`ArkNet-debug-unsigned.ipa` + `.app`（编译验证用途）。
+**该 IPA 无法直接真机安装**——接入签名后才能分发：
+
+1. Apple 后台（需**付费**开发者账号，免费账号签不了 packet-tunnel 权限）：
+   注册 `com.at.arknetprod2.ios` / `...ios.tunnel` 两个 App ID，
+   勾选 Network Extension + App Groups（`group.com.at.arknetprod2.ios`）。
+2. 创建 App Store Connect API Key，取 issuer id / key id / `.p8` 私钥。
+3. 在工作流里加回签名步骤（环境变量组 `arknet_signing`）：
+   ```yaml
+   environment:
+     groups:
+       - arknet_signing   # APP_STORE_CONNECT_ISSUER_ID / KEY_IDENTIFIER /
+                          # APP_STORE_CONNECT_PRIVATE_KEY / CERTIFICATE_PRIVATE_KEY
+   scripts:
+     - name: 配置签名
+       script: xcode-project use-profiles
+   ```
+   并把 build 脚本替换为：
+   ```yaml
+   - name: 打包 IPA
+     script: xcode-project build-ipa --project ArkNet.xcodeproj --scheme ArkNet --method ad-hoc
+   ```
+   （Codemagic CLI 工具会自动读取上述标准变量名，无需在 YAML 里声明
+   `environment.app_store_connect` 块——该块即此前 schema 校验报错的原因。）
 
 ## 与 Android 端的功能对齐矩阵
 
