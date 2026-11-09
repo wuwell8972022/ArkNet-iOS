@@ -44,7 +44,11 @@ final class TunnelCommandClient: NSObject, ObservableObject, LibboxCommandClient
         options.addCommand(LibboxCommandLog)
         options.addCommand(LibboxCommandGroup)
 
-        let client = LibboxNewCommandClient(self, options)
+        // LibboxNewCommandClient is a C function returning a nullable pointer.
+        guard let client = LibboxNewCommandClient(self, options) else {
+            appendLog("command client create failed (nil)")
+            return
+        }
         self.client = client
         DispatchQueue.global(qos: .utility).async {
             do {
