@@ -44,7 +44,7 @@ enum TunnelConfigBuilder {
         var publicIp: String?
 
         init(connect: NodeConnectData, nodeId: String, serverDomain: String? = nil) {
-            nodeId = nodeId
+            self.nodeId = nodeId
             proto = connect.proto
             serverHost = connect.ingress
             serverPort = connect.listenPort
@@ -164,6 +164,9 @@ enum TunnelConfigBuilder {
 
     // MARK: - Outbounds (protocol mapping + selector/urltest groups)
 
+    /// Tag of the server-issued node outbound; referenced by the groups below.
+    private static let nodeTag = "node"
+
     private static func buildOutbounds(_ node: NodeProfile, mode: Mode) throws -> [[String: Any]] {
         if mode == .protect {
             return [["type": "block", "tag": "block"]]
@@ -173,7 +176,7 @@ enum TunnelConfigBuilder {
         outbounds.append([
             "type": "urltest",
             "tag": "auto",
-            "outbounds": [node.tag],
+            "outbounds": [nodeTag],
             "url": "https://www.gstatic.com/generate_204",
             "interval": "5m",
             "tolerance": 50
@@ -181,7 +184,7 @@ enum TunnelConfigBuilder {
         outbounds.append([
             "type": "selector",
             "tag": "proxy",
-            "outbounds": ["auto", node.tag],
+            "outbounds": ["auto", nodeTag],
             "default": "auto"
         ])
         outbounds.append(["type": "direct", "tag": "direct"])
@@ -190,14 +193,9 @@ enum TunnelConfigBuilder {
         return outbounds
     }
 
-    private struct NodeBox {
-        let tag = "node"
-        var json: [String: Any]
-    }
-
     private static func buildNodeOutbound(_ node: NodeProfile) throws -> [String: Any] {
         var outbound: [String: Any] = [
-            "tag": "node",
+            "tag": nodeTag,
             "server": node.serverHost,
             "server_port": node.serverPort
         ]

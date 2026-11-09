@@ -7,8 +7,13 @@ import Libbox
 ///   * writeLogs    → kernel log stream
 ///   * writeGroups  → node latency after urlTest
 ///   * serviceReload → ask the tunnel to re-read config.json (node/mode switch)
-@MainActor
-final class TunnelCommandClient: NSObject, ObservableObject {
+///
+/// NOTE: this class is intentionally NOT `@MainActor`. It conforms to the
+/// `@objc` protocol `LibboxCommandClientHandlerProtocol`, and actor isolation
+/// would make its methods non-`@objc`, which the protocol rejects
+/// ("non-'@objc' method ... does not satisfy requirement"). Callbacks arrive on
+/// libbox threads, so every `@Published` mutation hops to the main queue.
+final class TunnelCommandClient: NSObject, ObservableObject, LibboxCommandClientHandlerProtocol {
 
     static let shared = TunnelCommandClient()
 
@@ -23,6 +28,7 @@ final class TunnelCommandClient: NSObject, ObservableObject {
     @Published var kernelLogs: [String] = []
 
     private var client: LibboxCommandClient?
+    private let logLock = NSLock()
 
     func resetDelay() {
         nodeDelayMs = -1
@@ -44,7 +50,7 @@ final class TunnelCommandClient: NSObject, ObservableObject {
             do {
                 try client.connect()
             } catch {
-                Task { @MainActor [weak self] in
+                DispatchQueue.main.async { [weak self] in
                     self?.socketConnected = false
                     self?.appendLog("command client connect failed: \(error)")
                 }
@@ -70,12 +76,12 @@ final class TunnelCommandClient: NSObject, ObservableObject {
 
     // MARK: - LibboxCommandClientHandlerProtocol
 
-    nonisolated func connected() {
-        Task { @MainActor in self.socketConnected = true }
+    func connected() {
+        DispatchQueue.main.async { self.socketConnected = true }
     }
 
-    nonisolated func disconnected(_ message: String?) {
-        Task { @MainActor in
+    func disconnected(_ message: String?) {
+        DispatchQueue.main.async {
             self.socketConnected = false
             if let message, !message.isEmpty {
                 self.appendLog("disconnected: \(message)")
@@ -83,13 +89,13 @@ final class TunnelCommandClient: NSObject, ObservableObject {
         }
     }
 
-    nonisolated func setDefaultLogLevel(_ level: Int32) {}
+    func setDefaultLogLevel(_ level: Int32) {}
 
-    nonisolated func clearLogs() {
-        Task { @MainActor in self.kernelLogs.removeAll() }
+    func clearLogs() {
+        DispatchQueue.main.async { self.kernelLogs.removeAll() }
     }
 
-    nonisolated func writeLogs(_ messageList: (any LibboxLogIteratorProtocol)?) {
+    func writeLogs(_ messageList: (any LibboxLogIteratorProtocol)?) {
         guard let messageList else { return }
         var lines: [String] = []
         while messageList.hasNext() {
@@ -97,12 +103,15 @@ final class TunnelCommandClient: NSObject, ObservableObject {
                 lines.append("\(entry.level)|\(entry.message)")
             }
         }
-        Task { @MainActor in lines.forEach { self.appendLog($0) } }
+        guard !lines.isEmpty else { return }
+        DispatchQueue.main.async {
+            lines.forEach { self.appendLog($0) }
+        }
     }
 
-    nonisolated func writeStatus(_ message: LibboxStatusMessage?) {
+    func writeStatus(_ message: LibboxStatusMessage?) {
         guard let message else { return }
-        Task { @MainActor in
+        DispatchQueue.main.async {
             self.uplinkBytes = message.uplink
             self.downlinkBytes = message.downlink
             self.uplinkTotal = message.uplinkTotal
@@ -112,33 +121,41 @@ final class TunnelCommandClient: NSObject, ObservableObject {
         }
     }
 
-    nonisolated func writeGroups(_ groups: (any LibboxOutboundGroupIteratorProtocol)?) {
+    func writeGroups(_ groups: (any LibboxOutboundGroupIteratorProtocol)?) {
         guard let groups else { return }
         var delay: Int32 = -1
         while groups.hasNext() {
             guard let group = groups.next() else { continue }
-            let items = group.getItems()
+            // getItems() is optional — unwrap before iterating.
+            guard let items = group.getItems() else { continue }
             while items.hasNext() {
                 if let item = items.next(), item.tag == "node" {
                     delay = item.urlTestDelay
                 }
             }
         }
-        Task { @MainActor in
+        DispatchQueue.main.async {
             if delay > 0 { self.nodeDelayMs = delay }
         }
     }
 
-    nonisolated func initializeClashMode(_ modeList: (any LibboxStringIteratorProtocol)?, currentMode: String?) {}
-    nonisolated func updateClashMode(_ newMode: String?) {}
-    nonisolated func writeConnectionEvents(_ events: LibboxConnectionEvents?) {}
+    func initializeClashMode(_ modeList: (any LibboxStringIteratorProtocol)?, currentMode: String?) {}
 
-    @MainActor
+    func updateClashMode(_ newMode: String?) {}
+
+    /// Go `WriteConnectionEvents` → Swift renames it to `write(_:)`.
+    func write(_ events: LibboxConnectionEvents?) {}
+
+    // MARK: - Log ring
+
     private func appendLog(_ line: String) {
+        logLock.lock()
+        defer { logLock.unlock() }
         kernelLogs.append(line)
         if kernelLogs.count > 200 {
             kernelLogs.removeFirst(kernelLogs.count - 200)
         }
+        TunnelStatusWriter.shared.appendLog(line)
     }
 }
 
