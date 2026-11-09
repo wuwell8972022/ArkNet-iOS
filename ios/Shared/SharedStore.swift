@@ -62,15 +62,30 @@ enum SharedStore {
                               : defaults.set(newValue, forKey: Key.disconnectToken) }
     }
 
-    /// Stable device identifier — iOS counterpart of the Android deviceId/OAID
-    /// pair used by device binding.
+    /// Stable device identifier — iOS counterpart of Android's `deviceId`.
+    ///
+    /// Android derives it from `Settings.Secure.ANDROID_ID` (16 lowercase hex
+    /// chars), so we keep the same shape to stay within anything the BFF may
+    /// assume about the header value.
     static var deviceID: String {
-        if let stored = defaults.string(forKey: Key.deviceId), !stored.isEmpty {
+        if let stored = defaults.string(forKey: Key.deviceId), isAndroidStyleID(stored) {
             return stored
         }
-        let fresh = UIDeviceHelper.vendorIdentifier ?? UUID().uuidString
+        let fresh = randomHexID()
         defaults.set(fresh, forKey: Key.deviceId)
         return fresh
+    }
+
+    private static func isAndroidStyleID(_ value: String) -> Bool {
+        value.count == 16 && value.allSatisfy { $0.isHexDigit }
+    }
+
+    private static func randomHexID() -> String {
+        var chars = ""
+        for _ in 0..<16 {
+            chars.append(Character(String(format: "%x", Int.random(in: 0..<16))))
+        }
+        return chars
     }
 }
 

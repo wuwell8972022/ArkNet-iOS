@@ -231,11 +231,16 @@ final class BFFClient {
     ) throws -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.setValue("ArkNet-iOS/1.0.1", forHTTPHeaderField: "User-Agent")
-        request.setValue(SharedStore.deviceID, forHTTPHeaderField: "device-id")
-        request.setValue("ios", forHTTPHeaderField: "platform")
-        request.setValue(Locale.current.identifier, forHTTPHeaderField: "locale")
-        request.setValue(TimeZone.current.identifier, forHTTPHeaderField: "timezone")
+        // 8 个客户端头缺一不可，否则 BFF 返回 400 / code 9009「header 参数错误」。
+        // 取值与 Android 的 lk3 header suppliers 逐项对齐，见 ClientHeaders。
+        request.setValue(ClientHeaders.userAgent, forHTTPHeaderField: "user-agent")
+        request.setValue(ClientHeaders.deviceID, forHTTPHeaderField: "device-id")
+        request.setValue(ClientHeaders.platform, forHTTPHeaderField: "platform")
+        request.setValue(ClientHeaders.model, forHTTPHeaderField: "model")
+        request.setValue(ClientHeaders.locale, forHTTPHeaderField: "locale")
+        request.setValue(ClientHeaders.timeZone, forHTTPHeaderField: "timezone")
+        request.setValue(ClientHeaders.channelCode, forHTTPHeaderField: "channel-code")
+        request.setValue(ClientHeaders.distributionChannel, forHTTPHeaderField: "distribution-channel")
 
         if signed {
             let key = Self.generateRandomKey()          // retained for response decrypt
