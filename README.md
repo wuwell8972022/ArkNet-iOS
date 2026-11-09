@@ -17,9 +17,10 @@ Android 客户端（`com.at.arknetprod2` v1.0.1，sing-box 1.13.0 内核）的 i
                │  App Group (group.com.at.arknetprod2.ios)
                │  config.json / 断连兜底 token / Darwin 通知
 ┌─ ArkNetTunnel (NE, PacketTunnelProvider) ────────────────────────┐
-│ libbox.CommandServer   ← startOrReloadService(configJSON)        │
-│ SafePlatform → libbox.PlatformInterface (openTun → packetFlow fd)│
-│ sing-box 1.13.0 (ArkNet.xcframework, gomobile bind)              │
+│ libbox.CommandServer       ← startOrReloadService(configJSON)    │
+│ TunnelPlatformInterface    ← libbox.PlatformInterface            │
+│     (openTun → packetFlow fd, NWPathMonitor → default interface) │
+│ sing-box 1.13.0 (Libbox.xcframework, gomobile bind libbox)       │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -30,19 +31,17 @@ ArkNet-iOS/
 ├ codemagic.yaml          # 免费版 CI（Go→xcframework→XcodeGen→IPA）
 ├ project.yml             # XcodeGen 工程定义（双 target + 共享源）
 ├ engine/
-│   ├ go.mod              # pin github.com/sagernet/sing-box v1.13.0
-│   └ bridge/bridge.go    # SafePlatform nil-guard（防 Swift→Go nil panic）
-│                         # + CheckConfig / Version 暴露
+│   └ go.mod              # 仅作说明/IDE 用：构建直接在 sing-box 源码树内 bind libbox
 └ ios/
     ├ App/                # SwiftUI 主应用（协议层 + 全部页面）
     ├ Tunnel/             # PacketTunnelProvider（CommandServerHandler +
     │                     #  PlatformInterface 双协议实现，fd KVC 桥）
     ├ Shared/             # SharedStore(App Group) / TunnelStatusWriter
     ├ Resources/          # client-bff-rsa-prod2.public.pem + 3 个 .srs
-    └ Frameworks/         # ArkNet.xcframework（CI 产出，静态 framework，链接不 embed）
+    └ Frameworks/         # Libbox.xcframework（CI 产出，静态 framework，链接不 embed）
 ```
 
-## 本地构建（需 macOS + Xcode 15.3+ + Go 1.24+，部署目标 iOS 16.0）
+## 本地构建（需 macOS + Xcode 15.3+，部署目标 iOS 16.0）
 
 ```bash
 brew install xcodegen
@@ -56,26 +55,24 @@ go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
 go install github.com/sagernet/gomobile/cmd/gobind@v0.1.12
 gomobile init
 
-# 1. 取 sing-box v1.13.0 源码树，注入 arknet 包（不改 go.mod）
+# 取 sing-box v1.13.0 源码树，直接绑官方 libbox（与 sing-box-for-apple 一致）
 git clone --depth 1 --branch v1.13.0 https://github.com/SagerNet/sing-box sing-box-src
-mkdir -p sing-box-src/experimental/arknet
-cp engine/arknet/arknet.go sing-box-src/experimental/arknet/
 cd sing-box-src
 export GOTOOLCHAIN=local
 
-# 2. 只启用产品需要的标签（不要加 with_tailscale，见下文）
+# 只启用产品需要的标签（不要加 with_tailscale，见下文）
 TAGS="with_gvisor,with_quic,with_wireguard,with_utls,badlinkname,tfogo_checklinkname0,grpcnotrace"
 gomobile bind -v -target ios \
-  -o ../ios/Frameworks/ArkNet.xcframework \
+  -o ../ios/Frameworks/Libbox.xcframework \
   -tags-not-macos=with_low_memory -tags "$TAGS" \
-  ./experimental/arknet
+  ./experimental/libbox
 cd ..
 
 xcodegen generate
 open ArkNet.xcodeproj    # 选 ArkNet scheme → Run
 ```
 
-> **构建三个必须遵守的约束**（都已踩过坑）：
+> **构建四条必须遵守的约束**（都已踩坑）：
 >
 > 1. **必须在 sing-box 源码树内构建**：`gobind` 的 `packageDir`
 >    （`bind/gen.go`）用 `packages.Load`（无 `Dir`）在**当前模块**里解析
@@ -85,21 +82,26 @@ open ArkNet.xcodeproj    # 选 ArkNet scheme → Run
 >    `github.com/go-json-experiment/json` 报 `undefined: json.SkipFunc`。
 > 3. **不要启用 `with_tailscale`**：该标签拉入 tailscale/kube/ssh 依赖链
 >    （上述 json 报错正是来自它），本项目不需要，去掉还能显著缩短构建。
+> 4. **只绑 `./experimental/libbox`，不要自建桥接包**：gomobile 只为被绑定包
+>    **自身声明**的类型生成 ObjC 绑定；绑自己的包会导致 `Libbox*` 类型全部缺失
+>    （`cannot find type 'LibboxCommandServer' in scope`）。
 >
 > **ObjC 类名前缀**：`bind/genobjc.go: namePrefixOf = Prefix + Title(pkg.Name())`，
-> 因此 libbox 的类型是 `Libbox*`（`LibboxPlatformInterfaceProtocol` 等），
-> 本工程的 arknet 包是 `Arknet*`（`ArknetNewSafePlatform`）。Swift 里不要
-> 自己起名，必须使用生成名。
+> libbox 的类型因此是 `Libbox*`（`LibboxPlatformInterfaceProtocol`、
+> `LibboxTunOptionsProtocol`、`LibboxCommandServerHandlerProtocol`）。
+> Go 的 `(T, error)` 生成 Swift `throws` + out-param `ret0_`；接口返回值是
+> 可空 ObjC 对象。Swift 里必须使用生成名，不可自拟。
 
 ## Codemagic 打包
 
 **当前 `codemagic.yaml` 为最简 Debug 工作流**：零凭据、零环境变量组，
 推到仓库后在 Codemagic 关联即可跑：
 
-> 工具链安装 → `ArkNet.xcframework`（sing-box 1.13.0 libbox）→
-> XcodeGen → `xcodebuild`（`CODE_SIGNING_ALLOWED=NO`）→ 未签名 debug IPA
+> 安装 Go 1.24.7 + gomobile → clone sing-box → `gomobile bind ./experimental/libbox`
+> → 打印生成的 `@protocol` 签名 → XcodeGen → `xcodebuild`
+> （`CODE_SIGNING_ALLOWED=NO`）→ 未签名 debug IPA
 
-产物：`ArkNet-debug-unsigned.ipa` + `.app`（编译验证用途）。
+产物：`Libbox.xcframework` + `ArkNet-debug-unsigned.ipa`（编译验证用途）。
 **该 IPA 无法直接真机安装**——接入签名后才能分发：
 
 1. Apple 后台（需**付费**开发者账号，免费账号签不了 packet-tunnel 权限）：
@@ -162,6 +164,8 @@ open ArkNet.xcodeproj    # 选 ArkNet scheme → Run
    其余 command 按需在 `NavView.swift::Coordinator.handle` 中扩展。
 5. **并发严格模式**：工程按 Swift 5 语言模式编译（minimal concurrency），
    迁移 Swift 6 strict 需处理 NE 回调的隔离标注。
+6. **IPv6**：与 Android 一致硬禁用（`ipv6Enabled=false`）；隧道只下发 IPv4
+   地址与路由，`.srs` 分流同理。
 
 ## 测试要点（联调清单）
 

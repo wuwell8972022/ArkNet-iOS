@@ -1,5 +1,5 @@
 import Foundation
-import ArkNet
+import Libbox
 
 /// App-side engine client — libbox.CommandClient over the shared unix socket
 /// (Swift counterpart of the Android app's in-process Box handle):

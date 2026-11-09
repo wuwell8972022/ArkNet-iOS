@@ -27,8 +27,8 @@ targets:
         buildPhase: resources
     dependencies:
       - target: ArkNetTunnel
-      # gomobile 产出的是静态 framework：链接，不要 embed
-      - framework: ios/Frameworks/ArkNet.xcframework
+      # gomobile 产出的是静�?framework：链接，不要 embed
+      - framework: ios/Frameworks/Libbox.xcframework
         embed: false
         link: true
     settings:
@@ -49,7 +49,7 @@ targets:
       - path: ios/Tunnel
       - path: ios/Shared
     dependencies:
-      - framework: ios/Frameworks/ArkNet.xcframework
+      - framework: ios/Frameworks/Libbox.xcframework
         embed: false
         link: true
     settings:
@@ -58,8 +58,7 @@ targets:
         PRODUCT_NAME: ArkNetTunnel
         INFOPLIST_FILE: ios/Tunnel/Info.plist
         CODE_SIGN_ENTITLEMENTS: ios/Tunnel/ArkNetTunnel.entitlements
-        # 扩展必须以 YES 构建，否则链接期报
-        # "Application extensions ... must be built with APPLICATION_EXTENSION_API_ONLY = YES"
+        # 扩展必须�?YES 构建，否则链接期�?        # "Application extensions ... must be built with APPLICATION_EXTENSION_API_ONLY = YES"
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"

@@ -1,17 +1,16 @@
 import Foundation
 import NetworkExtension
-import ArkNet
+import Libbox
 
 /// Packet Tunnel Provider hosting the sing-box engine in-process.
 ///
-/// Layering (mirrors how the Android client packaged libarknet.so):
+/// Layering is identical to sing-box-for-apple (SFI): the extension conforms to
+/// libbox's `CommandServerHandler` and `PlatformInterface` protocols and hosts a
+/// `LibboxCommandServer`. gomobile generates ObjC names as
+/// `Title(GoPkgName) + TypeName`, so everything from package `libbox` is
+/// prefixed `Libbox`.
 ///
-///   PacketTunnelProvider          ← libbox.CommandServerHandler protocol
-///     ├─ TunnelPlatformInterface  ← libbox.PlatformInterface protocol
-///     │    wrapped by ArknetSafePlatform (engine/arknet nil-guard)
-///     └─ LibboxCommandServer.startOrReloadService(configJSON)
-///
-/// The config JSON is written by the app to the App Group store and re-read on
+/// The config JSON is written by the app into the App Group store and re-read on
 /// every reload — the iOS equivalent of Android's Box.startOrReload(optionsJSON).
 final class PacketTunnelProvider: NEPacketTunnelProvider {
 
@@ -22,7 +21,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - NE lifecycle
 
     override func startTunnel(
-        with options: [String: NSObject]?,
+        options: [String: NSObject]?,
         completionHandler: @escaping (Error?) -> Void
     ) {
         setupLibbox()
@@ -96,10 +95,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         let platformInterface = TunnelPlatformInterface(self)
-        self.platform = platformInterface
+        platform = platformInterface
         do {
-            let safePlatform = try ArknetNewSafePlatform(platformInterface)
-            let server = try LibboxNewCommandServer(self, safePlatform)
+            let server = try LibboxNewCommandServer(self, platformInterface)
             try server.start()
             commandServer = server
             started = true
@@ -127,7 +125,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         do {
-            // OverrideOptions is nil: the JSON is already the full profile.
+            // OverrideOptions is nil: the JSON already is the full profile.
             try commandServer.startOrReloadService(configJSON, options: nil)
             writeLog("startOrReloadService ok (\(configJSON.count) bytes)")
         } catch {

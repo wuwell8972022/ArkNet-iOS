@@ -1,6 +1,6 @@
 import Foundation
 import NetworkExtension
-import ArkNet
+import Libbox
 
 /// libbox.PlatformInterface implementation for the Packet Tunnel Provider.
 ///
@@ -10,9 +10,8 @@ import ArkNet
 ///   * Go `(T, error)` → Swift `throws` with an out-pointer (`ret0_`) for T
 ///   * Go interface returns are nullable ObjC objects
 ///
-/// Our ArkNet.SafePlatform (engine/arknet) wraps this instance in Go to
-/// short-circuit iOS-irrelevant facets; calling into this Swift class is only
-/// done for facets it genuinely implements.
+/// iOS-irrelevant facets return nil / empty values directly (same as SFI):
+/// libbox guards these paths, so no extra Go-side wrapper package is needed.
 final class TunnelPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol {
 
     private weak var provider: PacketTunnelProvider?

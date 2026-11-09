@@ -45,20 +45,19 @@ workflows:
           gomobile init
           xcodegen --version
 
-      - name: 准备 sing-box 源码树并注入 arknet 包
+      - name: 准备 sing-box 源码树
         script: |
           set -euo pipefail
           export PATH="/usr/local/go/bin:$(go env GOPATH)/bin:$PATH"
           rm -rf sing-box-src
           git clone --depth 1 --branch "$SING_BOX_VERSION" \
             https://github.com/SagerNet/sing-box sing-box-src
-          mkdir -p sing-box-src/experimental/arknet
-          cp engine/arknet/arknet.go sing-box-src/experimental/arknet/
           cd sing-box-src
           # 不改 go.mod：gomobile v0.1.12 与 sing-box 的 require 完全一致
           go list -m github.com/sagernet/gomobile github.com/sagernet/sing-box
+          ls experimental/libbox | head
 
-      - name: 构建 ArkNet.xcframework (libbox + arknet)
+      - name: 构建 Libbox.xcframework (bind experimental/libbox)
         script: |
           set -euo pipefail
           export PATH="/usr/local/go/bin:$(go env GOPATH)/bin:$PATH"
@@ -74,17 +73,17 @@ workflows:
           TAGS="with_gvisor,with_quic,with_wireguard,with_utls,badlinkname,tfogo_checklinkname0,grpcnotrace"
           gomobile bind -v \
             -target ios \
-            -o "$CM_BUILD_DIR/ios/Frameworks/ArkNet.xcframework" \
+            -o "$CM_BUILD_DIR/ios/Frameworks/Libbox.xcframework" \
             -tags-not-macos=with_low_memory \
             -ldflags "-X github.com/sagernet/sing-box/constant.Version=1.13.0 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
             -tags "$TAGS" \
-            ./experimental/arknet
-          ls -la "$CM_BUILD_DIR/ios/Frameworks/ArkNet.xcframework"
+            ./experimental/libbox
+          ls -la "$CM_BUILD_DIR/ios/Frameworks/Libbox.xcframework"
 
       - name: 打印生成的协议签名 (签名不符时用于定位)
         script: |
           set -euo pipefail
-          HEADER=$(find ios/Frameworks/ArkNet.xcframework -name "ArkNet.h" | head -1)
+          HEADER=$(find ios/Frameworks/Libbox.xcframework -name "Libbox.h" | head -1)
           echo "header: $HEADER"
           for proto in LibboxPlatformInterfaceProtocol LibboxCommandServerHandlerProtocol \
                        LibboxCommandClientHandlerProtocol LibboxInterfaceUpdateListenerProtocol \
@@ -94,14 +93,12 @@ workflows:
             echo "----- $proto -----"
             awk "/@protocol $proto/,/@end/" "$HEADER" || true
           done
-          echo "----- Arknet* symbols -----"
-          grep -n "Arknet" "$HEADER" | head -30 || true
 
       - name: 生成工程并编译 (无签名, Debug)
         script: |
           set -euo pipefail
-          # project.yml 引用 ios/Frameworks/ArkNet.xcframework，先确认存在
-          test -d ios/Frameworks/ArkNet.xcframework || { echo "missing xcframework"; exit 1; }
+          # project.yml 引用 ios/Frameworks/Libbox.xcframework，先确认存在
+          test -d ios/Frameworks/Libbox.xcframework || { echo "missing xcframework"; exit 1; }
           xcodegen generate
           xcodebuild \
             -project ArkNet.xcodeproj \
