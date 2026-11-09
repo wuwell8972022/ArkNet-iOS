@@ -1,44 +1,19 @@
-# Codemagic CI — ArkNet iOS（免费版单工作流）
+# Codemagic — ArkNet iOS 最简 Debug 工作流（免费版，零签名配置）
 #
-# 前置条件（在 Codemagic 控制台配置一次，之后全自动）：
-#   1. 环境变量组（Environment variable groups）命名为 `arknet_signing`，包含：
-#      APP_STORE_CONNECT_ISSUER_ID     App Store Connect API Key 的 issuer id
-#      APP_STORE_CONNECT_KEY_IDENTIFIER  API Key 的 key id
-#      APP_STORE_CONNECT_PRIVATE_KEY   API Key 的 .p8 私钥全文（或 _BASE64）
-#      CERTIFICATE_PRIVATE_KEY         签名证书 .p12 的私钥（PEM/PKCS8 文本）
-#   2. Apple 后台需要：
-#      - 付费开发者账号（免费账号无法签发 packet-tunnel 权限）
-#      - App ID 开启 Network Extension 与 App Groups
-#      - 为 com.at.arknetprod2.ios 与 com.at.arknetprod2.ios.tunnel 注册
-#        group.com.at.arknetprod2.ios
+# 不需要任何 Apple 凭据 / 环境变量组：
+#   Go + sagernet-gomobile → sing-box 1.13.0 libbox → ArkNet.xcframework
+#   → XcodeGen 生成工程 → xcodebuild 无签名编译 → 未签名 debug IPA
 #
-# 构建流程：
-#   Go + gomobile(sagernet fork) → sing-box 1.13.0 libbox → ArkNet.xcframework
-#   → XcodeGen 生成工程 → 自动签名 → xcodebuild 打包 IPA
+# 注意：CODE_SIGNING_ALLOWED=NO 产出的 IPA 仅用于 CI 编译验证，
+# 真机安装需在后续接入签名（use-profiles + API Key，见 README）。
 
 workflows:
-  arknet-ios:
-    name: ArkNet iOS
-    max_build_duration: 90
-    instance_type: mac_mini_m2
-
-    triggering:
-      events:
-        - push
-        - tag
-      branch_patterns:
-        - pattern: "main"
-          include: true
-          source: true
+  arknet-ios-debug:
+    name: ArkNet iOS Debug
+    max_build_duration: 60
 
     environment:
       xcode: latest
-      groups:
-        - arknet_signing
-      app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
 
     scripts:
       - name: 安装工具链 (Go / sagernet-gomobile / XcodeGen)
@@ -46,13 +21,9 @@ workflows:
           set -euo pipefail
           brew install go xcodegen
           export PATH="$(go env GOPATH)/bin:$PATH"
-          # sing-box 官方 iOS 侧使用 sagernet gomobile 分支
           go install github.com/sagernet/gomobile/cmd/gomobile@latest
           go install github.com/sagernet/gomobile/cmd/gobind@latest
           gomobile init
-          echo "--- versions ---"
-          go version
-          xcodegen --version
 
       - name: 构建 ArkNet.xcframework (sing-box 1.13.0 libbox + bridge)
         script: |
@@ -60,7 +31,6 @@ workflows:
           export PATH="$(go env GOPATH)/bin:$PATH"
           mkdir -p ios/Frameworks
           cd engine
-          go mod download
           gomobile bind \
             -target=ios \
             -iosversion 16.0 \
@@ -70,33 +40,31 @@ workflows:
           cd ..
           ls -la ios/Frameworks/ArkNet.xcframework
 
-      - name: 生成 Xcode 工程 (XcodeGen)
+      - name: 生成工程并编译 (无签名, Debug, 真机 SDK)
         script: |
           set -euo pipefail
           xcodegen generate
+          xcodebuild \
+            -project ArkNet.xcodeproj \
+            -scheme ArkNet \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
-      - name: 配置签名 (App Store Connect)
+      - name: 打包未签名 debug IPA
         script: |
           set -euo pipefail
-          xcode-project use-profiles \
-            --bundle-id-pattern "com.at.arknetprod2.ios*"
-
-      - name: 打包 IPA
-        script: |
-          set -euo pipefail
-          xcode-project build-ipa \
-            --project ArkNet.xcodeproj \
-            --scheme ArkNet \
-            --method ad-hoc
+          APP=$(find build/DerivedData/Build/Products -maxdepth 2 \
+                -path '*iphoneos*/ArkNet.app' | head -1)
+          test -n "$APP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qr ArkNet-debug-unsigned.ipa Payload
+          rm -rf Payload
 
     artifacts:
-      - build/ios/ipa/*.ipa
-      - "$HOME/Library/Developer/Xcode/DerivedData/**/Build/Products/**/*.app"
-
-    publishing:
-      email:
-        recipients:
-          - your-email@example.com
-        notify:
-          success: true
-          failure: true
+      - build/DerivedData/Build/Products/**/*.app
+      - "*.ipa"
