@@ -100,6 +100,8 @@ workflows:
       - name: 生成工程并编译 (无签名, Debug)
         script: |
           set -euo pipefail
+          # project.yml 引用 ios/Frameworks/ArkNet.xcframework，先确认存在
+          test -d ios/Frameworks/ArkNet.xcframework || { echo "missing xcframework"; exit 1; }
           xcodegen generate
           xcodebuild \
             -project ArkNet.xcodeproj \

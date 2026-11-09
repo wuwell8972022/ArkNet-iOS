@@ -39,7 +39,7 @@ ArkNet-iOS/
     │                     #  PlatformInterface 双协议实现，fd KVC 桥）
     ├ Shared/             # SharedStore(App Group) / TunnelStatusWriter
     ├ Resources/          # client-bff-rsa-prod2.public.pem + 3 个 .srs
-    └ Frameworks/         # ArkNet.xcframework（CI 产出，不入库）
+    └ Frameworks/         # ArkNet.xcframework（CI 产出，静态 framework，链接不 embed）
 ```
 
 ## 本地构建（需 macOS + Xcode 15.3+ + Go 1.24+，部署目标 iOS 16.0）
