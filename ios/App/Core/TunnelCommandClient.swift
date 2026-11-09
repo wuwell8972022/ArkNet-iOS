@@ -167,6 +167,8 @@ enum TunnelSetup {
         options.commandServerSecret = ""
         options.logMaxLines = 5000
         options.debug = false
-        try? LibboxSetup(options)
+        // C function, not a throwing method — pass the NSError out-param.
+        var setupError: NSError?
+        _ = LibboxSetup(options, &setupError)
     }
 }

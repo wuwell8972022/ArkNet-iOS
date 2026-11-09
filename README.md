@@ -91,6 +91,19 @@ open ArkNet.xcodeproj    # 选 ArkNet scheme → Run
 > `LibboxTunOptionsProtocol`、`LibboxCommandServerHandlerProtocol`）。
 > Go 的 `(T, error)` 生成 Swift `throws` + out-param `ret0_`；接口返回值是
 > 可空 ObjC 对象。Swift 里必须使用生成名，不可自拟。
+>
+> **5. C 函数 ≠ ObjC 方法（编译期易错点）**：
+> gomobile 把 Go 包级函数生成为 **C 函数**（`FOUNDATION_EXPORT ...`），包级函数
+> 不会被 Swift 导入成 `throws`，必须显式传错误指针：
+> ```swift
+> var error: NSError?
+> guard let server = LibboxNewCommandServer(self, platform, &error) else { ... }
+> if !LibboxSetup(options, &error) { ... }
+> ```
+> 而 **方法**（如 `- (BOOL)start:(NSError**)error`）才会被导入成 `try`。
+> 另外 `TunOptions.getDNSServerAddress()` 在 v1.13 返回单个
+> `LibboxStringBox`（`.value` 是地址字符串），**不是迭代器**；
+> `NEPacketTunnelProvider` 的取消方法是 `cancelTunnelWithError(_:)`。
 
 ## Codemagic 打包
 

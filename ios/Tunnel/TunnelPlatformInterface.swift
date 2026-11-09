@@ -42,14 +42,8 @@ final class TunnelPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol {
         if options.getAutoRoute() {
             settings.mtu = NSNumber(value: options.getMTU())
 
-            if let dnsServerIterator = try options.getDNSServerAddress() {
-                var dnsServers: [String] = []
-                while dnsServerIterator.hasNext() {
-                    dnsServers.append(dnsServerIterator.next())
-                }
-                if !dnsServers.isEmpty {
-                    settings.dnsSettings = NEDNSSettings(servers: dnsServers)
-                }
+            if let dnsServer = try? options.getDNSServerAddress().value, !dnsServer.isEmpty {
+                settings.dnsSettings = NEDNSSettings(servers: [dnsServer])
             }
 
             var ipv4Addresses: [String] = []

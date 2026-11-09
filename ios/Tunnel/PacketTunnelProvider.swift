@@ -80,10 +80,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         options.commandServerSecret = ""
         options.logMaxLines = 5000
         options.debug = false
-        do {
-            try LibboxSetup(options)
-        } catch {
-            writeLog("libbox setup failed: \(error)")
+        // LibboxSetup is a plain C function (FOUNDATION_EXPORT BOOL ...(options,
+        // NSError**)), so it is NOT imported as `throws` — pass the error out-param.
+        var setupError: NSError?
+        if !LibboxSetup(options, &setupError) {
+            writeLog("libbox setup failed: \(setupError?.localizedDescription ?? "unknown")")
         }
     }
 
@@ -96,15 +97,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         let platformInterface = TunnelPlatformInterface(self)
         platform = platformInterface
+        // LibboxNewCommandServer is also a C function: returns nil + NSError**.
+        var createError: NSError?
+        guard let server = LibboxNewCommandServer(self, platformInterface, &createError) else {
+            writeLog("command server create failed: \(createError?.localizedDescription ?? "unknown")")
+            cancelTunnelWithError(NSError(domain: "ArkNetTunnel", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "引擎创建失败: \(createError?.localizedDescription ?? "unknown")"
+            ]))
+            return
+        }
         do {
-            let server = try LibboxNewCommandServer(self, platformInterface)
             try server.start()
             commandServer = server
             started = true
             reloadEngine()
         } catch {
             writeLog("command server start failed: \(error)")
-            cancelTunnel(withError: NSError(domain: "ArkNetTunnel", code: -1, userInfo: [
+            cancelTunnelWithError(NSError(domain: "ArkNetTunnel", code: -1, userInfo: [
                 NSLocalizedDescriptionKey: "引擎启动失败: \(error)"
             ]))
         }
@@ -119,7 +128,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
               let configJSON = String(data: configData, encoding: .utf8),
               !configJSON.isEmpty else {
             writeLog("no tunnel config in app group")
-            cancelTunnel(withError: NSError(domain: "ArkNetTunnel", code: -2, userInfo: [
+            cancelTunnelWithError(NSError(domain: "ArkNetTunnel", code: -2, userInfo: [
                 NSLocalizedDescriptionKey: "缺少隧道配置（App Group tunnel.config）"
             ]))
             return
