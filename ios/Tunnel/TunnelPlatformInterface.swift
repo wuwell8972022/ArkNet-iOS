@@ -299,7 +299,10 @@ final class TunnelPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol {
         try? runBlocking { try await provider.setTunnelNetworkSettings(networkSettings) }
     }
 
-    func sendNotification(_ notification: LibboxNotification?) throws {
+    /// Go `SendNotification(notification *Notification) error`.
+    /// Swift's ObjC importer renames `sendNotification:` to `send(_:)`
+    /// (the same reason sing-box-for-apple declares it as `send`).
+    func send(_ notification: LibboxNotification?) throws {
         guard let notification else { return }
         provider?.writeLog("notification: \(notification.title) \(notification.body)")
     }
