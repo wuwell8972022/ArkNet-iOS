@@ -24,6 +24,11 @@
     <dict>
         <key>NSExtensionPointIdentifier</key>
         <string>com.apple.networkextension.packet-tunnel</string>
+        <!-- A Packet Tunnel Provider has no storyboard, so installd requires
+             the entry class here. $(PRODUCT_MODULE_NAME) expands to
+             ArkNetTunnel, giving the fully-qualified Swift class name. -->
+        <key>NSExtensionPrincipalClass</key>
+        <string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>
     </dict>
 </dict>
 </plist>
