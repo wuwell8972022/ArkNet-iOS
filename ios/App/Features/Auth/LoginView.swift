@@ -28,17 +28,19 @@ struct LoginView: View {
                 field("用户名 / 邮箱", text: $identifier, isSecure: false)
                 field("密码", text: $password, isSecure: true)
 
-                if let captcha {
-                    SlideCaptchaView(
-                        captcha: captcha,
-                        onSuccess: { draggedX in
-                            attemptLogin(captchaAnswer: String(draggedX))
-                        },
-                        onFail: { errorMessage = "验证未通过，请重试" }
-                    )
-                } else {
-                    Button("加载验证码") { loadCaptcha() }
-                        .buttonStyle(.bordered)
+                if AuthConfig.captchaEnabled {
+                    if let captcha {
+                        SlideCaptchaView(
+                            captcha: captcha,
+                            onSuccess: { draggedX in
+                                attemptLogin(captchaAnswer: String(draggedX))
+                            },
+                            onFail: { errorMessage = "验证未通过，请重试" }
+                        )
+                    } else {
+                        Button("加载验证码") { loadCaptcha() }
+                            .buttonStyle(.bordered)
+                    }
                 }
 
                 if let evictionNotice {
@@ -51,7 +53,12 @@ struct LoginView: View {
                 }
 
                 Button {
-                    loadCaptcha()
+                    if AuthConfig.captchaEnabled {
+                        // 需先拿到验证码让用户滑动
+                        if captcha == nil { loadCaptcha() }
+                    } else {
+                        attemptLogin(captchaAnswer: nil)
+                    }
                 } label: {
                     if loading {
                         ProgressView().controlSize(.small)
@@ -74,7 +81,9 @@ struct LoginView: View {
         }
         .background(Theme.background)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { loadCaptcha() }
+        .onAppear {
+            if AuthConfig.captchaEnabled { loadCaptcha() }
+        }
     }
 
     private func field(_ placeholder: String, text: Binding<String>, isSecure: Bool) -> some View {
@@ -103,16 +112,17 @@ struct LoginView: View {
         }
     }
 
-    private func attemptLogin(captchaAnswer: String) {
+    private func attemptLogin(captchaAnswer: String?) {
         loading = true
         errorMessage = nil
+        let useCaptcha = AuthConfig.captchaEnabled
         Task {
             do {
                 let data = try await APIService().login(LoginRequest(
                     identifier: identifier,
                     password: password,
-                    captchaId: captcha?.captchaId,
-                    captchaAnswer: captchaAnswer,
+                    captchaId: useCaptcha ? captcha?.captchaId : nil,
+                    captchaAnswer: useCaptcha ? captchaAnswer : nil,
                     email: nil
                 ))
                 session.applyLogin(data)
@@ -123,7 +133,7 @@ struct LoginView: View {
                 }
             } catch {
                 errorMessage = AppError.describe(error)
-                loadCaptcha()
+                if AuthConfig.captchaEnabled { loadCaptcha() }
             }
             loading = false
         }
@@ -149,25 +159,29 @@ struct RegisterView: View {
         ScrollView {
             VStack(spacing: 14) {
                 field("邮箱", text: $email)
-                Button(codeSent ? "重新发送验证码" : "发送验证码") { sendCode() }
-                    .font(.footnote)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                field("验证码", text: $code)
+                if AuthConfig.emailCodeEnabled {
+                    Button(codeSent ? "重新发送验证码" : "发送验证码") { sendCode() }
+                        .font(.footnote)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    field("验证码", text: $code)
+                }
                 field("用户名", text: $username)
                 field("密码", text: $password, secure: true)
                 field("邀请码（选填）", text: $inviteCode)
 
-                if let captcha {
-                    SlideCaptchaView(
-                        captcha: captcha,
-                        onSuccess: { draggedX in
-                            register(captchaAnswer: String(draggedX))
-                        },
-                        onFail: { errorMessage = "验证未通过，请重试" }
-                    )
-                } else {
-                    Button("加载验证码") { loadCaptcha() }
-                        .buttonStyle(.bordered)
+                if AuthConfig.captchaEnabled {
+                    if let captcha {
+                        SlideCaptchaView(
+                            captcha: captcha,
+                            onSuccess: { draggedX in
+                                register(captchaAnswer: String(draggedX))
+                            },
+                            onFail: { errorMessage = "验证未通过，请重试" }
+                        )
+                    } else {
+                        Button("加载验证码") { loadCaptcha() }
+                            .buttonStyle(.bordered)
+                    }
                 }
 
                 if let errorMessage {
@@ -175,7 +189,11 @@ struct RegisterView: View {
                 }
 
                 Button {
-                    loadCaptcha()
+                    if AuthConfig.captchaEnabled {
+                        if captcha == nil { loadCaptcha() }
+                    } else {
+                        register(captchaAnswer: nil)
+                    }
                 } label: {
                     if loading { ProgressView() } else { Text("注 册").bold() }
                     Spacer(minLength: 0)
@@ -188,7 +206,9 @@ struct RegisterView: View {
         .background(Theme.background)
         .navigationTitle("注册")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { loadCaptcha() }
+        .onAppear {
+            if AuthConfig.captchaEnabled { loadCaptcha() }
+        }
     }
 
     private func field(_ placeholder: String, text: Binding<String>, secure: Bool = false) -> some View {
@@ -224,15 +244,17 @@ struct RegisterView: View {
         }
     }
 
-    private func register(captchaAnswer: String) {
+    private func register(captchaAnswer: String?) {
         loading = true
+        let useCaptcha = AuthConfig.captchaEnabled
+        let useEmailCode = AuthConfig.emailCodeEnabled
         Task {
             do {
                 _ = try await APIService().register(RegisterRequest(
                     email: email, username: username, password: password,
-                    code: code,
-                    captchaId: captcha?.captchaId,
-                    captchaAnswer: captchaAnswer,
+                    code: useEmailCode ? code : nil,
+                    captchaId: useCaptcha ? captcha?.captchaId : nil,
+                    captchaAnswer: useCaptcha ? captchaAnswer : nil,
                     inviteCode: inviteCode.isEmpty ? nil : inviteCode
                 ))
                 errorMessage = nil

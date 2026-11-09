@@ -138,7 +138,8 @@ struct RegisterRequest: Encodable {
     let email: String
     let username: String
     let password: String
-    let code: String
+    /// 邮箱验证码 —— 可选：官方当前不下发，nil 时该字段不会出现在请求体里。
+    let code: String?
     let captchaId: String?
     let captchaAnswer: String?
     let inviteCode: String?
