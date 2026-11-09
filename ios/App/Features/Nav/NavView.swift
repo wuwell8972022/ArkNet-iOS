@@ -61,8 +61,15 @@ struct NavView: View {
             }
             .background(Theme.background)
             .navigationTitle("导航")
-            .navigationDestination(item: $browsingURL) { url in
-                NavBrowseView(url: url)
+            // `navigationDestination(item:)` is iOS 17+; the isPresented form
+            // keeps iOS 16 support.
+            .navigationDestination(isPresented: Binding(
+                get: { browsingURL != nil },
+                set: { presented in if !presented { browsingURL = nil } }
+            )) {
+                if let url = browsingURL {
+                    NavBrowseView(url: url)
+                }
             }
             .task { reload() }
         }

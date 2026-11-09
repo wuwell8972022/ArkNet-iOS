@@ -52,7 +52,9 @@ enum Digest {
     }
 
     static func hmacSHA256Base64(key: Data, message: Data) -> String {
-        let mac = HMAC.sha256(key: key, data: message)
+        // CryptoKit's HMAC is generic over the hash function; there is no
+        // convenience `HMAC.sha256(key:data:)`.
+        let mac = HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: key))
         return Data(mac).base64EncodedString()
     }
 

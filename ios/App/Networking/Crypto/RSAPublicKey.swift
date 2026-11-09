@@ -23,14 +23,14 @@ struct RSAPublicKey {
             .replacingOccurrences(of: "-----END PUBLIC KEY-----", with: "")
             .filter { !$0.isNewline }
         guard let der = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
-              der.count > spki2048Prefix.count else {
+              der.count > Self.spki2048Prefix.count else {
             throw CryptoError.invalidPEM
         }
         let bytes = [UInt8](der)
-        guard bytes.starts(with: spki2048Prefix) else {
+        guard bytes.starts(with: Self.spki2048Prefix) else {
             throw CryptoError.unsupportedSPKI
         }
-        let pkcs1 = der.dropFirst(spki2048Prefix.count)
+        let pkcs1 = der.dropFirst(Self.spki2048Prefix.count)
         guard let key = SecKeyCreateWithData(pkcs1 as CFData, [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
             kSecAttrKeyClass as String: kSecAttrKeyClassPublic
@@ -50,7 +50,8 @@ struct RSAPublicKey {
             plaintext as CFData,
             &error
         ) else {
-            throw CryptoError.rsaEncrypt(error?.takeRetainedValue())
+            let message = error?.takeRetainedValue().localizedDescription
+            throw CryptoError.rsaEncrypt(message)
         }
         return cipher as Data
     }
@@ -65,7 +66,7 @@ enum CryptoError: Error, LocalizedError {
     case invalidPEM
     case unsupportedSPKI
     case invalidKey
-    case rsaEncrypt(Unmanaged<CFError>?)
+    case rsaEncrypt(String?)
     case aesFailure(Int)
     case badBase64
 
@@ -74,7 +75,7 @@ enum CryptoError: Error, LocalizedError {
         case .invalidPEM: return "BFF 公钥 PEM 解析失败"
         case .unsupportedSPKI: return "BFF 公钥不是 2048-bit RSA SPKI"
         case .invalidKey: return "RSA 公钥创建失败 (SecKeyCreateWithData)"
-        case .rsaEncrypt(let err): return "RSA 加密失败: \(err?.takeRetainedValue().localizedDescription ?? "?")"
+        case .rsaEncrypt(let message): return "RSA 加密失败: \(message ?? "?")"
         case .aesFailure(let status): return "AES-ECB 失败 CCCrypt status=\(status)"
         case .badBase64: return "响应密文 Base64 解码失败"
         }
