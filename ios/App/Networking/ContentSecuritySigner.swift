@@ -69,18 +69,29 @@ struct ContentSecuritySigner {
         let tsSeconds = (Int64(Date().timeIntervalSince1970 * 1000) + clockOffsetMilliseconds) / 1000
         let timestamp = String(tsSeconds)
 
-        // 4. signing string
+        // 4. signing string — EXACTLY five newline-separated lines:
+        //      ts \n METHOD \n /path \n <encodedQuery> \n <bodySHA256>
+        //    Android builds it as k00.V0(ts, method, path, query, hash) joined by
+        //    "\n" (p50.java). The query line stays present and empty when the
+        //    URL has no query — omitting it, or folding the query into the path
+        //    with "?", makes the HMAC differ and the BFF answers 9010.
         let path = "/" + url.pathSegments.joined(separator: "/")
         let query = url.query ?? ""
-        let pathWithQuery = query.isEmpty ? path : path + "?" + query
         let bodyHash: String
         if let encryptedBodyText {
             bodyHash = Digest.sha256Hex(Data(encryptedBodyText.utf8))
         } else {
             bodyHash = Digest.emptyBodySHA256Hex
         }
-        let signString = [timestamp, method.uppercased(), pathWithQuery, bodyHash]
+        let signString = [timestamp, method.uppercased(), path, query, bodyHash]
             .joined(separator: "\n")
+
+        #if DEBUG
+        // 排障用：把签名串按 ⏎ 显形（只含摘要，不含明文 body）。
+        NSLog("[BFF-SIGN] %@ %@ ts=%@ hash=%@ sign=%@",
+              method.uppercased(), path, timestamp, bodyHash,
+              signString.replacingOccurrences(of: "\n", with: "⏎"))
+        #endif
 
         // 5. HMAC signature
         let hmac = Digest.hmacSHA256Base64(key: randomKey, message: Data(signString.utf8))
