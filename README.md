@@ -46,27 +46,40 @@ ArkNet-iOS/
 
 ```bash
 brew install go xcodegen
-# 版本必须与 engine/go.mod require 的 sagernet/gomobile 一致
 go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
 go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
 gomobile init
 
-cd engine
-go mod download
-gomobile bind -target=ios -iosversion 16.0 \
-  -bundleid com.at.arknetprod2.ios.framework \
-  -o ../ios/Frameworks/ArkNet.xcframework ./bridge
+# 1. 取 sing-box v1.13.0 源码树，注入 arknet 包
+git clone --depth 1 --branch v1.13.0 https://github.com/SagerNet/sing-box sing-box-src
+mkdir -p sing-box-src/experimental/arknet
+cp engine/arknet/arknet.go sing-box-src/experimental/arknet/
+cd sing-box-src && go get github.com/sagernet/gomobile@v0.1.13
+export GOTOOLCHAIN=local
+
+# 2. 用官方 apple 标签绑出 xcframework（标签见 cmd/internal/build_libbox）
+TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_dhcp,grpcnotrace"
+gomobile bind -v -target ios,iossimulator \
+  -o ../ios/Frameworks/ArkNet.xcframework \
+  -tags-not-macos=with_low_memory -tags "$TAGS" \
+  ./experimental/arknet
 cd ..
 
 xcodegen generate
 open ArkNet.xcodeproj    # 选 ArkNet scheme → Run
 ```
 
-> **gobind 版本坑**：`gobind` 在目标模块上下文中解析
-> `github.com/sagernet/gomobile/bind(/objc)`——若模块未显式 require gomobile，
-> 会报 `unable to import bind: no Go package`。本工程已在 engine/go.mod
-> 中 require `github.com/sagernet/gomobile v0.1.13`（与 CI 安装的二进制
-> 版本、Android 端 libarknet.so 构建版本三者一致）。
+> **为什么必须在 sing-box 源码树内构建**：`gobind` 的 `packageDir`
+> （`bind/gen.go`）用 `packages.Load`（无 `Dir`）在**当前模块**里解析
+> `github.com/sagernet/gomobile/bind(/objc)`。独立模块即使显式 require
+> gomobile，也常因依赖图/go.sum 不完整而报
+> `unable to import bind: no Go package`。放进 sing-box 模块即可复用其完整
+> 的 go.mod/go.sum —— 与上游 `make lib_apple` 完全一致。
+>
+> **ObjC 类名前缀**：`bind/genobjc.go: namePrefixOf = Prefix + Title(pkg.Name())`，
+> 因此 libbox 的类型是 `Libbox*`（`LibboxPlatformInterfaceProtocol` 等），
+> 本工程的 arknet 包是 `Arknet*`（`ArknetNewSafePlatform`）。Swift 里不要
+> 自己起名，必须使用生成名。
 
 ## Codemagic 打包
 

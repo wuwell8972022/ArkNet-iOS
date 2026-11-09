@@ -4,17 +4,18 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 *.xcresult
+Payload/
 
 # XcodeGen output — regenerate via `xcodegen generate`
 *.xcodeproj
 
-# Engine build product (CI/local gomobile output)
-ios/Frameworks/ArkNet.xcframework
+# Engine build inputs/products
+sing-box-src/
 ios/Frameworks/
+*.xcframework
 
 # Go
 engine/go.sum
-engine/bridge/arknet*
 *.test
 
 # macOS

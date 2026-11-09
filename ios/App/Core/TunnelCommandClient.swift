@@ -2,13 +2,13 @@ import Foundation
 import ArkNet
 
 /// App-side engine client — libbox.CommandClient over the shared unix socket
-/// (the Swift counterpart of the Android app's in-process Box handle):
-///   * WriteStatus → live traffic (Uplink/Downlink per interval + totals)
-///   * WriteLogs   → kernel log stream
-///   * WriteGroups → node latency (URLTestDelay) after commandClient.URLTest
-///   * ServiceReload → ask the tunnel to re-read config.json (switch node/mode)
+/// (Swift counterpart of the Android app's in-process Box handle):
+///   * writeStatus  → live traffic (per-interval + totals)
+///   * writeLogs    → kernel log stream
+///   * writeGroups  → node latency after urlTest
+///   * serviceReload → ask the tunnel to re-read config.json (node/mode switch)
 @MainActor
-final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObject {
+final class TunnelCommandClient: NSObject, ObservableObject {
 
     static let shared = TunnelCommandClient()
 
@@ -22,33 +22,30 @@ final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObjec
     @Published private(set) var nodeDelayMs: Int32 = -1
     @Published var kernelLogs: [String] = []
 
-    /// NodeSelectView latency test starts from a clean state.
+    private var client: LibboxCommandClient?
+
     func resetDelay() {
         nodeDelayMs = -1
     }
 
-    private var client: CommandClient?
-
     func connect() {
         guard client == nil else { return }
-        // Setup must run in the UI process too — same base path as the tunnel.
         TunnelSetup.setupBasePaths()
 
-        let options = CommandClientOptions()
-        options.statusInterval = 1   // seconds
-        options.addCommand(CommandStatus)
-        options.addCommand(CommandLog)
-        options.addCommand(CommandGroup)
+        let options = LibboxCommandClientOptions()
+        options.statusInterval = 1
+        options.addCommand(LibboxCommandStatus)
+        options.addCommand(LibboxCommandLog)
+        options.addCommand(LibboxCommandGroup)
 
-        let client = CommandClient(self, options)
+        let client = LibboxNewCommandClient(self, options)
         self.client = client
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        DispatchQueue.global(qos: .utility).async {
             do {
                 try client.connect()
-                _ = self
             } catch {
                 Task { @MainActor [weak self] in
-                    self?.connected = false
+                    self?.socketConnected = false
                     self?.appendLog("command client connect failed: \(error)")
                 }
             }
@@ -66,23 +63,21 @@ final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObjec
         try client?.serviceReload()
     }
 
-    /// Measure current node latency via the engine's urltest group.
+    /// Measure the current node latency through the engine's urltest group.
     func urlTest() throws {
         try client?.urlTest("auto")
     }
 
-    // MARK: - CommandClientHandler conformance
+    // MARK: - LibboxCommandClientHandlerProtocol
 
     nonisolated func connected() {
-        Task { @MainActor in
-            self.socketConnected = true
-        }
+        Task { @MainActor in self.socketConnected = true }
     }
 
-    nonisolated func disconnected(message: String) {
+    nonisolated func disconnected(_ message: String?) {
         Task { @MainActor in
             self.socketConnected = false
-            if !message.isEmpty {
+            if let message, !message.isEmpty {
                 self.appendLog("disconnected: \(message)")
             }
         }
@@ -94,7 +89,7 @@ final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObjec
         Task { @MainActor in self.kernelLogs.removeAll() }
     }
 
-    nonisolated func writeLogs(_ messageList: LogIterator?) {
+    nonisolated func writeLogs(_ messageList: (any LibboxLogIteratorProtocol)?) {
         guard let messageList else { return }
         var lines: [String] = []
         while messageList.hasNext() {
@@ -102,12 +97,10 @@ final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObjec
                 lines.append("\(entry.level)|\(entry.message)")
             }
         }
-        Task { @MainActor in
-            lines.forEach { self.appendLog($0) }
-        }
+        Task { @MainActor in lines.forEach { self.appendLog($0) } }
     }
 
-    nonisolated func writeStatus(_ message: StatusMessage?) {
+    nonisolated func writeStatus(_ message: LibboxStatusMessage?) {
         guard let message else { return }
         Task { @MainActor in
             self.uplinkBytes = message.uplink
@@ -119,16 +112,15 @@ final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObjec
         }
     }
 
-    nonisolated func writeGroups(_ groups: OutboundGroupIterator?) {
+    nonisolated func writeGroups(_ groups: (any LibboxOutboundGroupIteratorProtocol)?) {
         guard let groups else { return }
         var delay: Int32 = -1
         while groups.hasNext() {
-            if let group = groups.next() {
-                let items = group.getItems()
-                while items.hasNext() {
-                    if let item = items.next(), item.tag == "node" {
-                        delay = item.urlTestDelay
-                    }
+            guard let group = groups.next() else { continue }
+            let items = group.getItems()
+            while items.hasNext() {
+                if let item = items.next(), item.tag == "node" {
+                    delay = item.urlTestDelay
                 }
             }
         }
@@ -137,9 +129,9 @@ final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObjec
         }
     }
 
-    nonisolated func initializeClashMode(_ modeList: StringIterator?, currentMode: String) {}
-    nonisolated func updateClashMode(_ newMode: String) {}
-    nonisolated func writeConnectionEvents(_ events: ConnectionEvents?) {}
+    nonisolated func initializeClashMode(_ modeList: (any LibboxStringIteratorProtocol)?, currentMode: String?) {}
+    nonisolated func updateClashMode(_ newMode: String?) {}
+    nonisolated func writeConnectionEvents(_ events: LibboxConnectionEvents?) {}
 
     @MainActor
     private func appendLog(_ line: String) {
@@ -150,9 +142,9 @@ final class TunnelCommandClient: NSObject, CommandClientHandler, ObservableObjec
     }
 }
 
-/// libbox.Setup for the app process (mirror of the tunnel's call).
+/// libbox.Setup for the app process (same container paths as the extension).
 enum TunnelSetup {
-    static var didSetup = false
+    private static var didSetup = false
 
     static func setupBasePaths() {
         guard !didSetup else { return }
@@ -167,7 +159,7 @@ enum TunnelSetup {
         try? fm.createDirectory(at: working, withIntermediateDirectories: true)
         try? fm.createDirectory(at: temp, withIntermediateDirectories: true)
 
-        let options = SetupOptions()
+        let options = LibboxSetupOptions()
         options.basePath = base.path
         options.workingPath = working.path
         options.tempPath = temp.path
@@ -175,6 +167,6 @@ enum TunnelSetup {
         options.commandServerSecret = ""
         options.logMaxLines = 5000
         options.debug = false
-        _ = try? Setup(options)
+        try? LibboxSetup(options)
     }
 }
