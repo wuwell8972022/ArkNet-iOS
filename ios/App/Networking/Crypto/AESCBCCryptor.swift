@@ -20,18 +20,25 @@ enum AESCBCCryptor {
         guard key.count == kCCKeySizeAES256 else {
             throw CryptoError.aesFailure(-4301) // kCCParamError
         }
-        var output = Data(count: input.count + kCCBlockSizeAES128)
+        // Hoist the capacity: reading `output.count` inside
+        // withUnsafeMutableBytes would overlap the exclusive access.
+        let capacity = input.count + kCCBlockSizeAES128
+        var output = Data(count: capacity)
         var moved = 0
-        let status = output.withUnsafeMutableBytes { outPtr -> CCCryptorStatus in
-            input.withUnsafeBytes { inPtr -> CCCryptorStatus in
+        let keyBytes = [UInt8](key)
+        let status: CCCryptorStatus = output.withUnsafeMutableBytes { outRaw in
+            guard let outBase = outRaw.baseAddress else {
+                return CCCryptorStatus(kCCParamError)
+            }
+            return input.withUnsafeBytes { inRaw in
                 CCCrypt(
                     encrypt ? CCOperation(kCCEncrypt) : CCOperation(kCCDecrypt),
                     CCAlgorithm(kCCAlgorithmAES),
                     CCOptions(kCCOptionPKCS7Padding) | CCOptions(kCCOptionECBMode),
-                    [UInt8](key), key.count,
+                    keyBytes, keyBytes.count,
                     nil,
-                    inPtr.baseAddress, input.count,
-                    outPtr.baseAddress, output.count, &moved
+                    inRaw.baseAddress, input.count,
+                    outBase, capacity, &moved
                 )
             }
         }
