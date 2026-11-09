@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Security
 
 /// BFF HTTP client — the Swift counterpart of the Android `ik3`/`t92` engine:
 ///
@@ -268,9 +269,11 @@ final class BFFClient {
 
     // MARK: - Per-request AES key retention
 
-    /// Task-local AES keys — keyed by URLRequest identity (p50 uses the same
-    /// key for request encryption and response decryption).
-    private static let keyRegistry = NSMapTable<NSString, NSData>.keyValueStrongReferences()
+    /// Per-request AES keys, keyed by request identity. p50 uses the same key
+    /// for request encryption and response decryption, so the key has to travel
+    /// from `buildURLRequest` to `perform` — a plain dictionary guarded by a
+    /// lock is sufficient (and avoids NSMapTable's ownership subtleties).
+    private static var requestKeys: [String: Data] = [:]
     private static let keyLock = NSLock()
 
     private static func generateRandomKey() -> Data {
@@ -282,15 +285,13 @@ final class BFFClient {
     private static func rememberRequestKey(_ request: URLRequest, key: Data) {
         keyLock.lock()
         defer { keyLock.unlock() }
-        keyRegistry.setObject(Data(key), forKey: requestIdentity(request) as NSString)
+        requestKeys[requestIdentity(request)] = key
     }
 
     private static func takeRequestKey(_ request: URLRequest) -> Data? {
         keyLock.lock()
         defer { keyLock.unlock() }
-        let key = keyRegistry.object(forKey: requestIdentity(request) as NSString) as Data?
-        keyRegistry.removeObject(forKey: requestIdentity(request) as NSString)
-        return key
+        return requestKeys.removeValue(forKey: requestIdentity(request))
     }
 
     private static func requestIdentity(_ request: URLRequest) -> String {
