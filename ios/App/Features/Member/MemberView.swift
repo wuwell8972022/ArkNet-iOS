@@ -39,7 +39,9 @@ struct MemberView: View {
                     .font(.headline)
                 Spacer()
                 if entitlement?.unlimitedTraffic == true {
-                    Text("不限流量").font(.caption).padding(4, 6)
+                    Text("不限流量").font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
                         .background(Theme.accentSoft, in: Capsule())
                         .foregroundStyle(Theme.accent)
                 }

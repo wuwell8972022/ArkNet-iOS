@@ -154,36 +154,31 @@ final class VPNManager: ObservableObject {
 
     private func startVPN() async throws {
         let manager = try await loadManager()
-        if manager.isEnabled == false {
-            try await manager.saveToPreferences()
-        }
-        let enabled = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Bool, Error>) in
-            manager.saveToPreferences { error in
-                cont.resume(returning: error == nil)
-            }
-        }
-        _ = enabled
+        // saveToPreferences is required before the profile becomes usable.
+        try await savePreferences(manager)
+
         let loaded = try await loadManager()
         guard loaded.isEnabled else {
             throw AppError.vpnProfileDisabled
         }
+        // iOS 16 exposes the throwing variants (no completion handler).
+        try loaded.connection.startVPNTunnel()
+        TunnelCommandClient.shared.connect()
+    }
+
+    private func savePreferences(_ manager: NETunnelProviderManager) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            loaded.connection.startVPNTunnel { error in
+            manager.saveToPreferences { error in
                 if let error { cont.resume(throwing: error) } else { cont.resume() }
             }
         }
-        TunnelCommandClient.shared.connect()
     }
 
     private func stopVPN() async throws {
         TunnelCommandClient.shared.disconnect()
         let manager = try await loadManager()
         guard manager.connection.status != .disconnected else { return }
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            manager.connection.stopVPNTunnel { error in
-                if let error { cont.resume(throwing: error) } else { cont.resume() }
-            }
-        }
+        try manager.connection.stopVPNTunnel()
     }
 
     private func loadManager() async throws -> NETunnelProviderManager {
