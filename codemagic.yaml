@@ -1,0 +1,102 @@
+# Codemagic CI — ArkNet iOS（免费版单工作流）
+#
+# 前置条件（在 Codemagic 控制台配置一次，之后全自动）：
+#   1. 环境变量组（Environment variable groups）命名为 `arknet_signing`，包含：
+#      APP_STORE_CONNECT_ISSUER_ID     App Store Connect API Key 的 issuer id
+#      APP_STORE_CONNECT_KEY_IDENTIFIER  API Key 的 key id
+#      APP_STORE_CONNECT_PRIVATE_KEY   API Key 的 .p8 私钥全文（或 _BASE64）
+#      CERTIFICATE_PRIVATE_KEY         签名证书 .p12 的私钥（PEM/PKCS8 文本）
+#   2. Apple 后台需要：
+#      - 付费开发者账号（免费账号无法签发 packet-tunnel 权限）
+#      - App ID 开启 Network Extension 与 App Groups
+#      - 为 com.at.arknetprod2.ios 与 com.at.arknetprod2.ios.tunnel 注册
+#        group.com.at.arknetprod2.ios
+#
+# 构建流程：
+#   Go + gomobile(sagernet fork) → sing-box 1.13.0 libbox → ArkNet.xcframework
+#   → XcodeGen 生成工程 → 自动签名 → xcodebuild 打包 IPA
+
+workflows:
+  arknet-ios:
+    name: ArkNet iOS
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+
+    triggering:
+      events:
+        - push
+        - tag
+      branch_patterns:
+        - pattern: "main"
+          include: true
+          source: true
+
+    environment:
+      xcode: latest
+      groups:
+        - arknet_signing
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+
+    scripts:
+      - name: 安装工具链 (Go / sagernet-gomobile / XcodeGen)
+        script: |
+          set -euo pipefail
+          brew install go xcodegen
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          # sing-box 官方 iOS 侧使用 sagernet gomobile 分支
+          go install github.com/sagernet/gomobile/cmd/gomobile@latest
+          go install github.com/sagernet/gomobile/cmd/gobind@latest
+          gomobile init
+          echo "--- versions ---"
+          go version
+          xcodegen --version
+
+      - name: 构建 ArkNet.xcframework (sing-box 1.13.0 libbox + bridge)
+        script: |
+          set -euo pipefail
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          mkdir -p ios/Frameworks
+          cd engine
+          go mod download
+          gomobile bind \
+            -target=ios \
+            -iosversion 16.0 \
+            -bundleid com.at.arknetprod2.ios.framework \
+            -o ../ios/Frameworks/ArkNet.xcframework \
+            ./bridge
+          cd ..
+          ls -la ios/Frameworks/ArkNet.xcframework
+
+      - name: 生成 Xcode 工程 (XcodeGen)
+        script: |
+          set -euo pipefail
+          xcodegen generate
+
+      - name: 配置签名 (App Store Connect)
+        script: |
+          set -euo pipefail
+          xcode-project use-profiles \
+            --bundle-id-pattern "com.at.arknetprod2.ios*"
+
+      - name: 打包 IPA
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa \
+            --project ArkNet.xcodeproj \
+            --scheme ArkNet \
+            --method ad-hoc
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - "$HOME/Library/Developer/Xcode/DerivedData/**/Build/Products/**/*.app"
+
+    publishing:
+      email:
+        recipients:
+          - your-email@example.com
+        notify:
+          success: true
+          failure: true

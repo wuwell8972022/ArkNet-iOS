@@ -1,0 +1,21 @@
+# Xcode / build
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcresult
+
+# XcodeGen output — regenerate via `xcodegen generate`
+*.xcodeproj
+
+# Engine build product (CI/local gomobile output)
+ios/Frameworks/ArkNet.xcframework
+ios/Frameworks/
+
+# Go
+engine/go.sum
+engine/bridge/arknet*
+*.test
+
+# macOS
+.DS_Store
