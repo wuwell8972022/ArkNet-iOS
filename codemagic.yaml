@@ -1,19 +1,19 @@
 # Codemagic — ArkNet iOS 最简 Debug 工作流（免费版，零签名配置）
 #
-# 构建形态与 Android 端 libarknet.so 一致：在 sing-box 源码树内新增一个
-# gomobile 包（engine/arknet），与 experimental/libbox 一起 bind。
-# 这样 gomobile/gobind 的模块解析走 sing-box 自己的 go.mod（已 require
-# sagernet/gomobile 且 go.sum 完整），避免独立模块的
-# "unable to import bind: no Go package"。
+# 构建形态与 Android 端 libarknet.so 一致：在 sing-box 源码树内直接绑定官方
+# experimental/libbox（sing-box-for-apple 的发布形态），产出 Libbox.xcframework。
 #
-# 两个已验证的坑（勿回退）：
-#   1. Go 必须固定为 sing-box v1.13.0 go.mod 声明的 1.24.7。
-#      用更新版本（1.25/1.26）会因 encoding/json/v2 实验差异导致
-#      github.com/go-json-experiment/json 报 undefined: json.SkipFunc。
-#   2. 不启用 with_tailscale 标签。该标签会拉入 tailscale/kube/ssh 大量依赖
-#      （上述 json 报错即来自 tailscale 链），本项目不需要，且可大幅缩短构建。
+# 已踩坑并固化的约束（勿回退）：
+#   1. 必须在 sing-box 源码树内 bind —— gobind 的 packageDir 用 packages.Load
+#      且不设 Dir，独立模块必报 "unable to import bind: no Go package"。
+#   2. Go 固定 1.24.7（sing-box v1.13.0 的 go.mod 声明版本）。更新版本会因
+#      encoding/json/v2 实验差异让 go-json-experiment/json 报 undefined: json.SkipFunc。
+#   3. 不启用 with_tailscale（拉入 tailscale/kube/ssh 依赖链，即上述 json 报错来源）。
+#   4. 只绑 ./experimental/libbox，不自建桥接包（否则 Libbox* 类型全部缺失）。
+#   5. 只在 -target ios 上构建（device 切片），省掉 iossimulator 一半工作量。
+#   6. 依赖下载与 bind 均带重试 —— proxy.golang.org 偶发 HTTP/2 stream 错误。
 #
-# 产出：ArkNet.xcframework（Libbox* / Arknet* 类前缀）+ 未签名 debug IPA。
+# 产出：Libbox.xcframework + 未签名 debug IPA（仅编译验证，真机需签名）。
 
 workflows:
   arknet-ios-debug:
@@ -26,12 +26,13 @@ workflows:
         GO_VERSION: "1.24.7"
         SING_BOX_VERSION: "v1.13.0"
         GOMOBILE_VERSION: "v0.1.12"   # = sing-box v1.13.0 go.mod 的 require 版本
+        # proxy.golang.org 偶发 stream error，配置备用代理
+        GOPROXY_LIST: "https://proxy.golang.org,https://goproxy.io,direct"
 
     scripts:
       - name: 安装 Go $GO_VERSION + XcodeGen + sagernet-gomobile
         script: |
           set -euo pipefail
-          # 固定 Go 版本（brew 的 go 是最新版，会触发 json/v2 编译错误）
           curl -fsSL "https://go.dev/dl/go${GO_VERSION}.darwin-arm64.tar.gz" -o /tmp/go.tgz
           sudo rm -rf /usr/local/go
           sudo tar -C /usr/local -xzf /tmp/go.tgz
@@ -45,40 +46,78 @@ workflows:
           gomobile init
           xcodegen --version
 
-      - name: 准备 sing-box 源码树
+      - name: 准备 sing-box 源码树（校验版本）
         script: |
           set -euo pipefail
           export PATH="/usr/local/go/bin:$(go env GOPATH)/bin:$PATH"
+          export GOPROXY="$GOPROXY_LIST"
           rm -rf sing-box-src
           git clone --depth 1 --branch "$SING_BOX_VERSION" \
             https://github.com/SagerNet/sing-box sing-box-src
           cd sing-box-src
-          # 不改 go.mod：gomobile v0.1.12 与 sing-box 的 require 完全一致
-          go list -m github.com/sagernet/gomobile github.com/sagernet/sing-box
-          ls experimental/libbox | head
+          ACTUAL=$(git describe --tags --always)
+          echo "checked out: $ACTUAL"
+          echo "go module versions:"
+          go list -m github.com/sagernet/sing-box github.com/sagernet/gomobile github.com/sagernet/sing
+          if [ "$ACTUAL" != "$SING_BOX_VERSION" ]; then
+            echo "ERROR: expected $SING_BOX_VERSION but got $ACTUAL"
+            exit 1
+          fi
+
+      - name: 预下载 Go 依赖（最多 5 次重试）
+        script: |
+          set -euo pipefail
+          export PATH="/usr/local/go/bin:$(go env GOPATH)/bin:$PATH"
+          export GOPROXY="$GOPROXY_LIST"
+          cd sing-box-src
+          for i in 1 2 3 4 5; do
+            echo "== go mod download attempt $i =="
+            if go mod download all; then
+              echo "dependencies ready"
+              break
+            fi
+            if [ "$i" = "5" ]; then
+              echo "ERROR: dependency download failed after 5 attempts"
+              exit 1
+            fi
+            sleep $((i * 10))
+          done
 
       - name: 构建 Libbox.xcframework (bind experimental/libbox)
         script: |
           set -euo pipefail
           export PATH="/usr/local/go/bin:$(go env GOPATH)/bin:$PATH"
+          export GOPROXY="$GOPROXY_LIST"
           export GOTOOLCHAIN=local
           mkdir -p "$CM_BUILD_DIR/ios/Frameworks"
           cd sing-box-src
-          # 只保留本产品实际需要的编译标签：
+          # 只保留本产品需要的标签：
           #   with_gvisor   TUN 用户态协议栈
           #   with_quic     hysteria2 / tuic / QUIC 传输
           #   with_wireguard
           #   with_utls     Reality 必需（uTLS 指纹）
-          # 链接器标志沿用上游 build_libbox
           TAGS="with_gvisor,with_quic,with_wireguard,with_utls,badlinkname,tfogo_checklinkname0,grpcnotrace"
-          gomobile bind -v \
-            -target ios \
-            -o "$CM_BUILD_DIR/ios/Frameworks/Libbox.xcframework" \
-            -tags-not-macos=with_low_memory \
-            -ldflags "-X github.com/sagernet/sing-box/constant.Version=1.13.0 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
-            -tags "$TAGS" \
-            ./experimental/libbox
-          ls -la "$CM_BUILD_DIR/ios/Frameworks/Libbox.xcframework"
+          OUT="$CM_BUILD_DIR/ios/Frameworks/Libbox.xcframework"
+          for i in 1 2 3; do
+            echo "== gomobile bind attempt $i =="
+            rm -rf "$OUT"
+            if gomobile bind -v \
+              -target ios \
+              -o "$OUT" \
+              -tags-not-macos=with_low_memory \
+              -ldflags "-X github.com/sagernet/sing-box/constant.Version=1.13.0 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
+              -tags "$TAGS" \
+              ./experimental/libbox; then
+              echo "bind ok"
+              break
+            fi
+            if [ "$i" = "3" ]; then
+              echo "ERROR: gomobile bind failed after 3 attempts"
+              exit 1
+            fi
+            sleep $((i * 15))
+          done
+          ls -la "$OUT"
 
       - name: 打印生成的协议签名 (签名不符时用于定位)
         script: |
@@ -97,7 +136,6 @@ workflows:
       - name: 生成工程并编译 (无签名, Debug)
         script: |
           set -euo pipefail
-          # project.yml 引用 ios/Frameworks/Libbox.xcframework，先确认存在
           test -d ios/Frameworks/Libbox.xcframework || { echo "missing xcframework"; exit 1; }
           xcodegen generate
           xcodebuild \
@@ -124,4 +162,4 @@ workflows:
     artifacts:
       - build/DerivedData/Build/Products/**/*.app
       - "*.ipa"
-      - ios/Frameworks/ArkNet.xcframework
+      - ios/Frameworks/Libbox.xcframework
