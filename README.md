@@ -45,21 +45,27 @@ ArkNet-iOS/
 ## 本地构建（需 macOS + Xcode 15.3+ + Go 1.24+，部署目标 iOS 16.0）
 
 ```bash
-brew install go xcodegen
-go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
-go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
+brew install xcodegen
+# Go 必须固定为 sing-box v1.13.0 go.mod 声明的 1.24.7
+curl -fsSL https://go.dev/dl/go1.24.7.darwin-arm64.tar.gz -o /tmp/go.tgz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz
+export PATH="/usr/local/go/bin:$PATH"
+
+# gomobile 版本必须与 sing-box v1.13.0 的 require 一致（v0.1.12）
+go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
+go install github.com/sagernet/gomobile/cmd/gobind@v0.1.12
 gomobile init
 
-# 1. 取 sing-box v1.13.0 源码树，注入 arknet 包
+# 1. 取 sing-box v1.13.0 源码树，注入 arknet 包（不改 go.mod）
 git clone --depth 1 --branch v1.13.0 https://github.com/SagerNet/sing-box sing-box-src
 mkdir -p sing-box-src/experimental/arknet
 cp engine/arknet/arknet.go sing-box-src/experimental/arknet/
-cd sing-box-src && go get github.com/sagernet/gomobile@v0.1.13
+cd sing-box-src
 export GOTOOLCHAIN=local
 
-# 2. 用官方 apple 标签绑出 xcframework（标签见 cmd/internal/build_libbox）
-TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_dhcp,grpcnotrace"
-gomobile bind -v -target ios,iossimulator \
+# 2. 只启用产品需要的标签（不要加 with_tailscale，见下文）
+TAGS="with_gvisor,with_quic,with_wireguard,with_utls,badlinkname,tfogo_checklinkname0,grpcnotrace"
+gomobile bind -v -target ios \
   -o ../ios/Frameworks/ArkNet.xcframework \
   -tags-not-macos=with_low_memory -tags "$TAGS" \
   ./experimental/arknet
@@ -69,12 +75,16 @@ xcodegen generate
 open ArkNet.xcodeproj    # 选 ArkNet scheme → Run
 ```
 
-> **为什么必须在 sing-box 源码树内构建**：`gobind` 的 `packageDir`
-> （`bind/gen.go`）用 `packages.Load`（无 `Dir`）在**当前模块**里解析
-> `github.com/sagernet/gomobile/bind(/objc)`。独立模块即使显式 require
-> gomobile，也常因依赖图/go.sum 不完整而报
-> `unable to import bind: no Go package`。放进 sing-box 模块即可复用其完整
-> 的 go.mod/go.sum —— 与上游 `make lib_apple` 完全一致。
+> **构建三个必须遵守的约束**（都已踩过坑）：
+>
+> 1. **必须在 sing-box 源码树内构建**：`gobind` 的 `packageDir`
+>    （`bind/gen.go`）用 `packages.Load`（无 `Dir`）在**当前模块**里解析
+>    `github.com/sagernet/gomobile/bind(/objc)`。独立模块即使显式 require
+>    gomobile 也会报 `unable to import bind: no Go package`。
+> 2. **Go 固定 1.24.7**：更新版本（1.25/1.26）的 `encoding/json/v2` 实验差异会让
+>    `github.com/go-json-experiment/json` 报 `undefined: json.SkipFunc`。
+> 3. **不要启用 `with_tailscale`**：该标签拉入 tailscale/kube/ssh 依赖链
+>    （上述 json 报错正是来自它），本项目不需要，去掉还能显著缩短构建。
 >
 > **ObjC 类名前缀**：`bind/genobjc.go: namePrefixOf = Prefix + Title(pkg.Name())`，
 > 因此 libbox 的类型是 `Libbox*`（`LibboxPlatformInterfaceProtocol` 等），

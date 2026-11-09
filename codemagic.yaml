@@ -1,60 +1,79 @@
 # Codemagic — ArkNet iOS 最简 Debug 工作流（免费版，零签名配置）
 #
-# 构建思路与 Android 端 libarknet.so 完全一致：在 sing-box 源码树内新增
-# 一个 gomobile 包（engine/arknet），与 experimental/libbox 一起 bind。
+# 构建形态与 Android 端 libarknet.so 一致：在 sing-box 源码树内新增一个
+# gomobile 包（engine/arknet），与 experimental/libbox 一起 bind。
 # 这样 gomobile/gobind 的模块解析走 sing-box 自己的 go.mod（已 require
-# sagernet/gomobile 且 go.sum 完整），避免独立模块里
-# "unable to import bind: no Go package" 的失败。
+# sagernet/gomobile 且 go.sum 完整），避免独立模块的
+# "unable to import bind: no Go package"。
 #
-# 产出：ArkNet.xcframework（Libbox* + Arknet* 类前缀）+ 未签名 debug IPA。
-# 未签名 IPA 仅供 CI 编译验证，真机安装需接入签名（见 README）。
+# 两个已验证的坑（勿回退）：
+#   1. Go 必须固定为 sing-box v1.13.0 go.mod 声明的 1.24.7。
+#      用更新版本（1.25/1.26）会因 encoding/json/v2 实验差异导致
+#      github.com/go-json-experiment/json 报 undefined: json.SkipFunc。
+#   2. 不启用 with_tailscale 标签。该标签会拉入 tailscale/kube/ssh 大量依赖
+#      （上述 json 报错即来自 tailscale 链），本项目不需要，且可大幅缩短构建。
+#
+# 产出：ArkNet.xcframework（Libbox* / Arknet* 类前缀）+ 未签名 debug IPA。
 
 workflows:
   arknet-ios-debug:
     name: ArkNet iOS Debug
-    max_build_duration: 90
+    max_build_duration: 120
 
     environment:
       xcode: latest
       vars:
-        SING_BOX_VERSION: v1.13.0
-        GOMODILE_VERSION: v0.1.13
+        GO_VERSION: "1.24.7"
+        SING_BOX_VERSION: "v1.13.0"
+        GOMOBILE_VERSION: "v0.1.12"   # = sing-box v1.13.0 go.mod 的 require 版本
 
     scripts:
-      - name: 安装工具链 (Go / sagernet-gomobile / XcodeGen)
+      - name: 安装 Go $GO_VERSION + XcodeGen + sagernet-gomobile
         script: |
           set -euo pipefail
-          brew install go xcodegen
+          # 固定 Go 版本（brew 的 go 是最新版，会触发 json/v2 编译错误）
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.darwin-arm64.tar.gz" -o /tmp/go.tgz
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf /tmp/go.tgz
+          export PATH="/usr/local/go/bin:$PATH"
+          go version
+
+          brew install xcodegen
           export PATH="$(go env GOPATH)/bin:$PATH"
-          go install "github.com/sagernet/gomobile/cmd/gomobile@${GOMODILE_VERSION}"
-          go install "github.com/sagernet/gomobile/cmd/gobind@${GOMODILE_VERSION}"
+          go install "github.com/sagernet/gomobile/cmd/gomobile@${GOMOBILE_VERSION}"
+          go install "github.com/sagernet/gomobile/cmd/gobind@${GOMOBILE_VERSION}"
           gomobile init
-          go version && gomobile version
+          xcodegen --version
 
       - name: 准备 sing-box 源码树并注入 arknet 包
         script: |
           set -euo pipefail
+          export PATH="/usr/local/go/bin:$(go env GOPATH)/bin:$PATH"
           rm -rf sing-box-src
           git clone --depth 1 --branch "$SING_BOX_VERSION" \
             https://github.com/SagerNet/sing-box sing-box-src
           mkdir -p sing-box-src/experimental/arknet
           cp engine/arknet/arknet.go sing-box-src/experimental/arknet/
           cd sing-box-src
-          # 与 Android libarknet.so 内嵌的 gomobile 版本对齐
-          go get "github.com/sagernet/gomobile@${GOMODILE_VERSION}"
+          # 不改 go.mod：gomobile v0.1.12 与 sing-box 的 require 完全一致
           go list -m github.com/sagernet/gomobile github.com/sagernet/sing-box
 
       - name: 构建 ArkNet.xcframework (libbox + arknet)
         script: |
           set -euo pipefail
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          export PATH="/usr/local/go/bin:$(go env GOPATH)/bin:$PATH"
           export GOTOOLCHAIN=local
           mkdir -p "$CM_BUILD_DIR/ios/Frameworks"
           cd sing-box-src
-          # 官方 build_libbox 的 apple 编译标签（cmd/internal/build_libbox）
-          TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_dhcp,grpcnotrace"
+          # 只保留本产品实际需要的编译标签：
+          #   with_gvisor   TUN 用户态协议栈
+          #   with_quic     hysteria2 / tuic / QUIC 传输
+          #   with_wireguard
+          #   with_utls     Reality 必需（uTLS 指纹）
+          # 链接器标志沿用上游 build_libbox
+          TAGS="with_gvisor,with_quic,with_wireguard,with_utls,badlinkname,tfogo_checklinkname0,grpcnotrace"
           gomobile bind -v \
-            -target ios,iossimulator \
+            -target ios \
             -o "$CM_BUILD_DIR/ios/Frameworks/ArkNet.xcframework" \
             -tags-not-macos=with_low_memory \
             -ldflags "-X github.com/sagernet/sing-box/constant.Version=1.13.0 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0" \
